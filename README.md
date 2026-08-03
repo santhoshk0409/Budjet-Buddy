@@ -31,16 +31,7 @@ npm run build
 
 ---
 
-## 🛠️ Environment Variables
 
-Create a `.env` file in the root directory:
-
-```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-public-key
-```
-
----
 
 ## 🌐 Deploy to Vercel
 
