@@ -43,6 +43,11 @@ export const ICON_OPTIONS = [
   { name: 'BookOpen', icon: BookOpen, label: 'Education' }
 ];
 
+export const ICON_MAP: Record<string, React.FC<{ className?: string; size?: number }>> = ICON_OPTIONS.reduce((acc, item) => {
+  acc[item.name] = item.icon;
+  return acc;
+}, {} as Record<string, React.FC<{ className?: string; size?: number }>>);
+
 interface IconProps {
   name?: string;
   className?: string;

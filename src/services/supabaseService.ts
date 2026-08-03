@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { Expense, User } from '../types';
+import type { Wallet, Expense, User } from '../types';
 import { db } from '../db/database';
 
 export class SupabaseService {
@@ -7,7 +7,7 @@ export class SupabaseService {
     return isSupabaseConfigured && supabase !== null;
   }
 
-  // Register user on Supabase Auth with strict duplicate email error reporting
+  // Register user on Supabase Auth + Cloud Profiles table
   static async registerUser(name: string, email: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
     if (!this.isActive()) return { success: false, error: 'Supabase is not configured.' };
 
@@ -33,7 +33,6 @@ export class SupabaseService {
         return { success: false, error: authError.message };
       }
 
-      // Check if identity returned empty or duplicate user created with unconfirmed state
       if (authData.user && authData.user.identities && authData.user.identities.length === 0) {
         return { success: false, error: 'This Email ID is already registered. Please login instead.' };
       }
@@ -44,11 +43,15 @@ export class SupabaseService {
       }
 
       // Upsert profile in public.profiles table
-      await supabase!.from('profiles').upsert([{
+      const { error: profileErr } = await supabase!.from('profiles').upsert([{
         id: userId,
         name,
         email: trimmedEmail
       }]);
+
+      if (profileErr) {
+        console.error('Supabase profile upsert error:', profileErr);
+      }
 
       const newUser: User = {
         id: userId,
@@ -87,6 +90,15 @@ export class SupabaseService {
       const userId = authData.user.id;
       const { data: profile } = await supabase!.from('profiles').select('*').eq('id', userId).single();
 
+      // Ensure profile row exists in public.profiles
+      if (!profile) {
+        await supabase!.from('profiles').upsert([{
+          id: userId,
+          name: authData.user.user_metadata?.name || 'User',
+          email: trimmedEmail
+        }]);
+      }
+
       const user: User = {
         id: userId,
         name: profile?.name || authData.user.user_metadata?.name || 'User',
@@ -102,6 +114,172 @@ export class SupabaseService {
     } catch (err: any) {
       console.error('Supabase loginUser error:', err);
       return { success: false, error: err.message || 'Cloud login failed.' };
+    }
+  }
+
+  // Create Wallet in Cloud
+  static async createWallet(wallet: Wallet): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const payload: any = {
+        user_id: wallet.userId,
+        name: wallet.name,
+        budget_amount: wallet.budgetAmount,
+        spent_amount: wallet.spentAmount,
+        remaining_amount: wallet.remainingAmount,
+        color: wallet.color,
+        icon: wallet.icon
+      };
+
+      if (wallet.id && wallet.id.includes('-')) {
+        payload.id = wallet.id;
+      }
+
+      const { data, error } = await supabase!
+        .from('wallets')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase createWallet error:', error);
+        return false;
+      }
+
+      if (data && data.id && data.id !== wallet.id) {
+        await db.wallets.update(wallet.id, { id: data.id });
+      }
+
+      return true;
+    } catch (e) {
+      console.error('createWallet cloud error:', e);
+      return false;
+    }
+  }
+
+  // Update Wallet in Cloud
+  static async updateWallet(walletId: string, updates: Partial<Wallet>): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const cloudUpdates: any = {};
+      if (updates.name !== undefined) cloudUpdates.name = updates.name;
+      if (updates.budgetAmount !== undefined) cloudUpdates.budget_amount = updates.budgetAmount;
+      if (updates.spentAmount !== undefined) cloudUpdates.spent_amount = updates.spentAmount;
+      if (updates.remainingAmount !== undefined) cloudUpdates.remaining_amount = updates.remainingAmount;
+      if (updates.color !== undefined) cloudUpdates.color = updates.color;
+      if (updates.icon !== undefined) cloudUpdates.icon = updates.icon;
+      if (updates.isDeleted !== undefined) cloudUpdates.is_deleted = updates.isDeleted;
+
+      const { error } = await supabase!
+        .from('wallets')
+        .update(cloudUpdates)
+        .eq('id', walletId);
+
+      if (error) console.error('Supabase updateWallet error:', error);
+      return !error;
+    } catch (e) {
+      console.error('updateWallet cloud error:', e);
+      return false;
+    }
+  }
+
+  // Soft Delete Wallet in Cloud
+  static async deleteWallet(walletId: string): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const { error } = await supabase!
+        .from('wallets')
+        .update({ is_deleted: true })
+        .eq('id', walletId);
+      return !error;
+    } catch (e) {
+      console.error('deleteWallet cloud error:', e);
+      return false;
+    }
+  }
+
+  // Create Category in Cloud
+  static async createExpenseType(type: { id: string; userId: string; name: string; icon?: string }): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const payload: any = {
+        user_id: type.userId,
+        name: type.name,
+        icon: type.icon || 'Tag'
+      };
+
+      if (type.id && type.id.includes('-')) {
+        payload.id = type.id;
+      }
+
+      const { data, error } = await supabase!
+        .from('expense_types')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase createExpenseType error:', error);
+        return false;
+      }
+
+      if (data && data.id && data.id !== type.id) {
+        await db.expenseTypes.update(type.id, { id: data.id });
+      }
+
+      return true;
+    } catch (e) {
+      console.error('createExpenseType cloud error:', e);
+      return false;
+    }
+  }
+
+  // Add Expense to Cloud & recalculate wallet
+  static async createExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const payload: any = {
+        user_id: expense.userId,
+        wallet_id: expense.walletId,
+        expense_type_id: expense.expenseTypeId,
+        amount: expense.amount,
+        date: expense.date,
+        time: expense.time,
+        notes: expense.notes
+      };
+
+      const { error: expError } = await supabase!
+        .from('expenses')
+        .insert([payload]);
+
+      if (expError) {
+        console.error('Supabase createExpense error:', expError);
+        return false;
+      }
+
+      const { data: wallet } = await supabase!
+        .from('wallets')
+        .select('*')
+        .eq('id', expense.walletId)
+        .single();
+
+      if (wallet) {
+        const newSpent = Number(wallet.spent_amount) + expense.amount;
+        const newRemaining = Number(wallet.budget_amount) - newSpent;
+
+        await supabase!
+          .from('wallets')
+          .update({
+            spent_amount: newSpent,
+            remaining_amount: newRemaining
+          })
+          .eq('id', expense.walletId);
+      }
+
+      return true;
+    } catch (e) {
+      console.error('createExpense cloud error:', e);
+      return false;
     }
   }
 
@@ -163,44 +341,5 @@ export class SupabaseService {
     } catch (e) {
       console.error('syncCloudToLocal error:', e);
     }
-  }
-
-  // Add Expense to Cloud & recalculate wallet
-  static async createExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Promise<boolean> {
-    if (!this.isActive()) return false;
-    const { error: expError } = await supabase!
-      .from('expenses')
-      .insert([{
-        user_id: expense.userId,
-        wallet_id: expense.walletId,
-        expense_type_id: expense.expenseTypeId,
-        amount: expense.amount,
-        date: expense.date,
-        time: expense.time,
-        notes: expense.notes
-      }]);
-
-    if (expError) return false;
-
-    const { data: wallet } = await supabase!
-      .from('wallets')
-      .select('*')
-      .eq('id', expense.walletId)
-      .single();
-
-    if (wallet) {
-      const newSpent = Number(wallet.spent_amount) + expense.amount;
-      const newRemaining = Number(wallet.budget_amount) - newSpent;
-
-      await supabase!
-        .from('wallets')
-        .update({
-          spent_amount: newSpent,
-          remaining_amount: newRemaining
-        })
-        .eq('id', expense.walletId);
-    }
-
-    return true;
   }
 }
