@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User } from '../types';
-import { db, generateId, seedUserData } from '../db/database';
+import { db, generateId } from '../db/database';
 import { SupabaseService } from '../services/supabaseService';
 import { isSupabaseConfigured } from '../lib/supabase';
 
@@ -10,8 +10,8 @@ interface AuthContextType {
   theme: 'light' | 'dark';
   isCloudConnected: boolean;
   toggleTheme: () => void;
-  login: (mobileNumber: string, password: string) => Promise<boolean>;
-  register: (name: string, mobileNumber: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateProfile: (newName: string) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
@@ -55,8 +55,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setCurrentUser(user);
             if (isSupabaseConfigured) {
               await SupabaseService.syncCloudToLocal(user.id);
-            } else {
-              await seedUserData(user.id);
             }
           }
         }
@@ -69,34 +67,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkSession();
   }, []);
 
-  const login = async (mobileNumber: string, password: string): Promise<boolean> => {
-    // 1. Try Supabase Cloud Login if configured
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    const trimmedEmail = email.trim().toLowerCase();
+
+    // 1. Try Supabase Cloud Login
     if (isSupabaseConfigured) {
-      const res = await SupabaseService.loginUser(mobileNumber, password);
+      const res = await SupabaseService.loginUser(trimmedEmail, password);
       if (res.success && res.user) {
-        // Cache user locally in Dexie & localStorage
         await db.users.put(res.user);
         setCurrentUser(res.user);
         localStorage.setItem('wallet_buddy_user_id', res.user.id);
-        return true;
+        return { success: true };
+      } else if (res.error) {
+        return { success: false, error: res.error };
       }
     }
 
     // 2. Fallback to Local IndexedDB Login
-    const user = await db.users.where('mobileNumber').equals(mobileNumber).first();
+    const user = await db.users.where('email').equals(trimmedEmail).first();
     if (user && user.password === password) {
       setCurrentUser(user);
       localStorage.setItem('wallet_buddy_user_id', user.id);
-      await seedUserData(user.id);
-      return true;
+      return { success: true };
     }
-    return false;
+    return { success: false, error: 'Invalid email ID or password.' };
   };
 
-  const register = async (name: string, mobileNumber: string, password: string) => {
+  const register = async (name: string, email: string, password: string) => {
+    const trimmedEmail = email.trim().toLowerCase();
+
     // 1. Try Supabase Cloud Sign Up
     if (isSupabaseConfigured) {
-      const cloudRes = await SupabaseService.registerUser(name, mobileNumber, password);
+      const cloudRes = await SupabaseService.registerUser(name, trimmedEmail, password);
       if (cloudRes.success && cloudRes.user) {
         await db.users.put(cloudRes.user);
         await SupabaseService.syncCloudToLocal(cloudRes.user.id);
@@ -104,27 +106,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('wallet_buddy_user_id', cloudRes.user.id);
         return { success: true };
       } else if (cloudRes.error) {
-        // If Supabase returned specific error
-        console.warn('Supabase auth failed, trying local register:', cloudRes.error);
+        return { success: false, error: cloudRes.error };
       }
     }
 
     // 2. Fallback to Local Registration
-    const existing = await db.users.where('mobileNumber').equals(mobileNumber).first();
+    const existing = await db.users.where('email').equals(trimmedEmail).first();
     if (existing) {
-      return { success: false, error: 'Mobile number already registered.' };
+      return { success: false, error: 'Email ID already registered.' };
     }
 
     const newUser: User = {
       id: generateId(),
       name,
-      mobileNumber,
+      email: trimmedEmail,
       password,
       createdAt: new Date().toISOString()
     };
 
     await db.users.add(newUser);
-    await seedUserData(newUser.id);
     setCurrentUser(newUser);
     localStorage.setItem('wallet_buddy_user_id', newUser.id);
     return { success: true };

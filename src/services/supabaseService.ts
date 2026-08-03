@@ -7,27 +7,35 @@ export class SupabaseService {
     return isSupabaseConfigured && supabase !== null;
   }
 
-  // Register user on Supabase Auth + Cloud Profiles table
-  static async registerUser(name: string, mobileNumber: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
+  // Register user on Supabase Auth with strict duplicate email error reporting
+  static async registerUser(name: string, email: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
     if (!this.isActive()) return { success: false, error: 'Supabase is not configured.' };
 
-    const fakeEmail = `${mobileNumber}@walletbuddy.app`;
+    const trimmedEmail = email.trim().toLowerCase();
 
     try {
       const { data: authData, error: authError } = await supabase!.auth.signUp({
-        email: fakeEmail,
+        email: trimmedEmail,
         password,
         options: {
-          data: { name, mobile_number: mobileNumber }
+          data: { name, email: trimmedEmail }
         }
       });
 
       if (authError) {
-        // If user already exists in cloud auth, attempt login directly
-        if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
-          return this.loginUser(mobileNumber, password);
+        if (
+          authError.message.toLowerCase().includes('already registered') ||
+          authError.message.toLowerCase().includes('user already exists') ||
+          authError.message.toLowerCase().includes('already exists')
+        ) {
+          return { success: false, error: 'This Email ID is already registered. Please login instead.' };
         }
         return { success: false, error: authError.message };
+      }
+
+      // Check if identity returned empty or duplicate user created with unconfirmed state
+      if (authData.user && authData.user.identities && authData.user.identities.length === 0) {
+        return { success: false, error: 'This Email ID is already registered. Please login instead.' };
       }
 
       const userId = authData.user?.id;
@@ -39,13 +47,13 @@ export class SupabaseService {
       await supabase!.from('profiles').upsert([{
         id: userId,
         name,
-        mobile_number: mobileNumber
+        email: trimmedEmail
       }]);
 
       const newUser: User = {
         id: userId,
         name,
-        mobileNumber,
+        email: trimmedEmail,
         password,
         createdAt: new Date().toISOString()
       };
@@ -57,24 +65,23 @@ export class SupabaseService {
     }
   }
 
-  // Login user on Supabase Auth
-  static async loginUser(mobileNumber: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
+  // Login user on Supabase Auth using Email
+  static async loginUser(email: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
     if (!this.isActive()) return { success: false, error: 'Supabase is not configured.' };
 
-    const fakeEmail = `${mobileNumber}@walletbuddy.app`;
+    const trimmedEmail = email.trim().toLowerCase();
 
     try {
       const { data: authData, error: authError } = await supabase!.auth.signInWithPassword({
-        email: fakeEmail,
+        email: trimmedEmail,
         password
       });
 
       if (authError || !authData.user) {
-        // Check if unconfirmed email error
         if (authError?.message?.toLowerCase().includes('email not confirmed')) {
-          return { success: false, error: 'Please disable "Confirm Email" in Supabase Auth settings to log in on all devices.' };
+          return { success: false, error: 'Email is unconfirmed. Turn OFF "Confirm email" in Supabase Auth Settings to log in.' };
         }
-        return { success: false, error: authError?.message || 'Invalid mobile number or password.' };
+        return { success: false, error: authError?.message || 'Invalid email or password.' };
       }
 
       const userId = authData.user.id;
@@ -82,8 +89,8 @@ export class SupabaseService {
 
       const user: User = {
         id: userId,
-        name: profile?.name || authData.user.user_metadata?.name || 'Sandy',
-        mobileNumber,
+        name: profile?.name || authData.user.user_metadata?.name || 'User',
+        email: trimmedEmail,
         password,
         createdAt: authData.user.created_at
       };

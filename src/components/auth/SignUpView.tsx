@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { User, Smartphone, Lock, UserCheck, ArrowRight, Wallet } from 'lucide-react';
+import { User, Mail, Lock, UserCheck, ArrowRight, Wallet } from 'lucide-react';
 
 interface SignUpViewProps {
   onSwitchToLogin: () => void;
@@ -9,7 +9,7 @@ interface SignUpViewProps {
 export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
   const { register } = useAuth();
   const [fullName, setFullName] = useState('');
-  const [mobileNumber, setMobileNumber] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,8 +23,8 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
       setError('Full Name is required.');
       return;
     }
-    if (!mobileNumber.trim()) {
-      setError('Mobile Number is required.');
+    if (!email.trim() || !email.includes('@')) {
+      setError('A valid Email ID is required.');
       return;
     }
     if (password.length < 6) {
@@ -38,7 +38,7 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
 
     setIsSubmitting(true);
     try {
-      const res = await register(fullName.trim(), mobileNumber.trim(), password);
+      const res = await register(fullName.trim(), email.trim(), password);
       if (!res.success) {
         setError(res.error || 'Failed to create account.');
       }
@@ -57,7 +57,7 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
           <Wallet className="w-7 h-7 text-white" />
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-white mb-1">Create Account</h1>
-        <p className="text-slate-400 text-sm">Start budgeting and tracking your expenses today</p>
+        <p className="text-slate-400 text-sm">Start budgeting and tracking your expenses</p>
       </div>
 
       {/* Form Card */}
@@ -89,15 +89,15 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-              Mobile Number *
+              Email ID *
             </label>
             <div className="relative">
-              <Smartphone className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+              <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
               <input
-                type="tel"
-                placeholder="9876543210"
-                value={mobileNumber}
-                onChange={e => setMobileNumber(e.target.value)}
+                type="email"
+                placeholder="sandy@example.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
                 className="w-full bg-slate-800/80 border border-slate-700/80 text-white rounded-2xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
                 required
               />
@@ -141,7 +141,7 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full mt-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-2xl py-3.5 px-4 text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-all disabled:opacity-50"
+            className="w-full mt-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-2xl py-3.5 px-4 text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? 'Creating Account...' : 'Create Account'}
             <ArrowRight className="w-4 h-4" />
@@ -162,7 +162,7 @@ export const SignUpView: React.FC<SignUpViewProps> = ({ onSwitchToLogin }) => {
       </div>
 
       <div className="py-2 text-center text-xs text-slate-500">
-        Wallet Buddy • Offline Personal Finance
+        Wallet Buddy • Personal Finance
       </div>
     </div>
   );

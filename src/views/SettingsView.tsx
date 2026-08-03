@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
 import {
-  Smartphone,
+  Mail,
   Lock,
   LogOut,
   Wallet as WalletIcon,
@@ -106,7 +106,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `WalletBuddy_Backup_${currentUser.mobileNumber}.json`;
+    link.download = `WalletBuddy_Backup_${currentUser.email.replace(/[@.]/g, '_')}.json`;
     link.click();
   };
 
@@ -207,8 +207,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               )}
               <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>{currentUser?.mobileNumber}</span>
+                <Mail className="w-3.5 h-3.5" />
+                <span>{currentUser?.email}</span>
               </div>
             </div>
           </div>

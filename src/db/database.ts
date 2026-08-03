@@ -10,8 +10,8 @@ export class WalletBuddyDB extends Dexie {
 
   constructor() {
     super('WalletBuddyDatabase');
-    this.version(1).stores({
-      users: 'id, &mobileNumber',
+    this.version(2).stores({
+      users: 'id, &email',
       wallets: 'id, userId, name',
       expenseTypes: 'id, userId, name',
       expenses: 'id, userId, walletId, expenseTypeId, date, createdAt',
@@ -27,10 +27,8 @@ export const generateId = () => {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 };
 
-// Seed function disabled to maintain 100% clean slate with zero mock data
-export const seedUserData = async (_userId: string) => {
-  // No mock data generated
-};
+// Zero mock data generated
+export const seedUserData = async (_userId: string) => {};
 
 // Clear all local database tables
 export const clearAllLocalData = async () => {

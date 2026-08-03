@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Wallet, Smartphone, Lock, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Wallet, Mail, Lock, ArrowRight, ShieldCheck } from 'lucide-react';
 
 interface LoginViewProps {
   onSwitchToSignUp: () => void;
@@ -8,7 +8,7 @@ interface LoginViewProps {
 
 export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
   const { login } = useAuth();
-  const [mobileNumber, setMobileNumber] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,16 +17,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
     e.preventDefault();
     setError('');
 
-    if (!mobileNumber.trim() || !password) {
-      setError('Please enter both mobile number and password.');
+    if (!email.trim() || !password) {
+      setError('Please enter both Email ID and password.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const success = await login(mobileNumber.trim(), password);
-      if (!success) {
-        setError('Invalid mobile number or password.');
+      const res = await login(email.trim(), password);
+      if (!res.success) {
+        setError(res.error || 'Invalid email ID or password.');
       }
     } catch {
       setError('An error occurred during login. Please try again.');
@@ -43,7 +43,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
           <Wallet className="w-8 h-8 text-white" />
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-white mb-1">Welcome Back</h1>
-        <p className="text-slate-400 text-sm">Manage your monthly budgets & daily expenses offline</p>
+        <p className="text-slate-400 text-sm">Manage your monthly budgets & daily expenses</p>
       </div>
 
       {/* Login Form Card */}
@@ -58,15 +58,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-              Mobile Number
+              Email ID
             </label>
             <div className="relative">
-              <Smartphone className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
+              <Mail className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
               <input
-                type="tel"
-                placeholder="e.g. 9876543210"
-                value={mobileNumber}
-                onChange={e => setMobileNumber(e.target.value)}
+                type="email"
+                placeholder="e.g. sandy@example.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
                 className="w-full bg-slate-800/80 border border-slate-700/80 text-white rounded-2xl pl-11 pr-4 py-3 text-sm focus:outline-none focus:border-blue-500 transition-colors"
                 required
               />
@@ -93,7 +93,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-2xl py-3.5 px-4 text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 active:scale-[0.98] transition-all disabled:opacity-50"
+            className="w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-2xl py-3.5 px-4 text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? 'Logging in...' : 'Login'}
             <ArrowRight className="w-4 h-4" />
@@ -116,7 +116,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSwitchToSignUp }) => {
       {/* Footer */}
       <div className="py-4 text-center flex items-center justify-center gap-1.5 text-xs text-slate-500">
         <ShieldCheck className="w-4 h-4 text-emerald-500" />
-        <span>100% Secure Offline Storage</span>
+        <span>Secure Cloud Database</span>
       </div>
     </div>
   );
