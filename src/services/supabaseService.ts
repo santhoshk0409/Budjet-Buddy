@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { Wallet, Expense, User } from '../types';
+import type { Expense, User } from '../types';
 import { db } from '../db/database';
 
 export class SupabaseService {
