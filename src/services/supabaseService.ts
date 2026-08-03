@@ -23,6 +23,10 @@ export class SupabaseService {
       });
 
       if (authError) {
+        // If user already exists in cloud auth, attempt login directly
+        if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
+          return this.loginUser(mobileNumber, password);
+        }
         return { success: false, error: authError.message };
       }
 
@@ -31,8 +35,8 @@ export class SupabaseService {
         return { success: false, error: 'Failed to create cloud user account.' };
       }
 
-      // Insert into public.profiles table
-      await supabase!.from('profiles').insert([{
+      // Upsert profile in public.profiles table
+      await supabase!.from('profiles').upsert([{
         id: userId,
         name,
         mobile_number: mobileNumber
@@ -66,6 +70,10 @@ export class SupabaseService {
       });
 
       if (authError || !authData.user) {
+        // Check if unconfirmed email error
+        if (authError?.message?.toLowerCase().includes('email not confirmed')) {
+          return { success: false, error: 'Please disable "Confirm Email" in Supabase Auth settings to log in on all devices.' };
+        }
         return { success: false, error: authError?.message || 'Invalid mobile number or password.' };
       }
 
@@ -74,7 +82,7 @@ export class SupabaseService {
 
       const user: User = {
         id: userId,
-        name: profile?.name || authData.user.user_metadata?.name || 'User',
+        name: profile?.name || authData.user.user_metadata?.name || 'Sandy',
         mobileNumber,
         password,
         createdAt: authData.user.created_at
@@ -90,90 +98,64 @@ export class SupabaseService {
     }
   }
 
-  // Seed function disabled - zero mock data generated
-  static async seedCloudUserData(_userId: string) {
-    // No mock data generated
-  }
-
   // Sync Cloud database records into local Dexie
   static async syncCloudToLocal(userId: string) {
     if (!this.isActive()) return;
 
-    // Wallets
-    const { data: cloudWallets } = await supabase!.from('wallets').select('*').eq('user_id', userId);
-    if (cloudWallets && cloudWallets.length > 0) {
-      for (const cw of cloudWallets) {
-        await db.wallets.put({
-          id: cw.id,
-          userId: cw.user_id,
-          name: cw.name,
-          budgetAmount: Number(cw.budget_amount),
-          spentAmount: Number(cw.spent_amount),
-          remainingAmount: Number(cw.remaining_amount),
-          color: cw.color,
-          icon: cw.icon,
-          createdAt: cw.created_at,
-          isDeleted: cw.is_deleted
-        });
+    try {
+      // Wallets
+      const { data: cloudWallets } = await supabase!.from('wallets').select('*').eq('user_id', userId);
+      if (cloudWallets && cloudWallets.length > 0) {
+        for (const cw of cloudWallets) {
+          await db.wallets.put({
+            id: cw.id,
+            userId: cw.user_id,
+            name: cw.name,
+            budgetAmount: Number(cw.budget_amount),
+            spentAmount: Number(cw.spent_amount),
+            remainingAmount: Number(cw.remaining_amount),
+            color: cw.color,
+            icon: cw.icon,
+            createdAt: cw.created_at,
+            isDeleted: cw.is_deleted
+          });
+        }
       }
-    }
 
-    // Expense Types
-    const { data: cloudTypes } = await supabase!.from('expense_types').select('*').eq('user_id', userId);
-    if (cloudTypes && cloudTypes.length > 0) {
-      for (const ct of cloudTypes) {
-        await db.expenseTypes.put({
-          id: ct.id,
-          userId: ct.user_id,
-          name: ct.name,
-          icon: ct.icon,
-          isDeleted: ct.is_deleted
-        });
+      // Expense Types
+      const { data: cloudTypes } = await supabase!.from('expense_types').select('*').eq('user_id', userId);
+      if (cloudTypes && cloudTypes.length > 0) {
+        for (const ct of cloudTypes) {
+          await db.expenseTypes.put({
+            id: ct.id,
+            userId: ct.user_id,
+            name: ct.name,
+            icon: ct.icon,
+            isDeleted: ct.is_deleted
+          });
+        }
       }
-    }
 
-    // Expenses
-    const { data: cloudExpenses } = await supabase!.from('expenses').select('*').eq('user_id', userId);
-    if (cloudExpenses && cloudExpenses.length > 0) {
-      for (const ce of cloudExpenses) {
-        await db.expenses.put({
-          id: ce.id,
-          userId: ce.user_id,
-          walletId: ce.wallet_id,
-          expenseTypeId: ce.expense_type_id,
-          amount: Number(ce.amount),
-          date: ce.date,
-          time: ce.time,
-          notes: ce.notes,
-          createdAt: ce.created_at
-        });
+      // Expenses
+      const { data: cloudExpenses } = await supabase!.from('expenses').select('*').eq('user_id', userId);
+      if (cloudExpenses && cloudExpenses.length > 0) {
+        for (const ce of cloudExpenses) {
+          await db.expenses.put({
+            id: ce.id,
+            userId: ce.user_id,
+            walletId: ce.wallet_id,
+            expenseTypeId: ce.expense_type_id,
+            amount: Number(ce.amount),
+            date: ce.date,
+            time: ce.time,
+            notes: ce.notes,
+            createdAt: ce.created_at
+          });
+        }
       }
+    } catch (e) {
+      console.error('syncCloudToLocal error:', e);
     }
-  }
-
-  // Fetch Wallets
-  static async fetchWallets(userId: string): Promise<Wallet[] | null> {
-    if (!this.isActive()) return null;
-    const { data, error } = await supabase!
-      .from('wallets')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_deleted', false)
-      .order('created_at', { ascending: true });
-
-    if (error) return null;
-
-    return data.map(row => ({
-      id: row.id,
-      userId: row.user_id,
-      name: row.name,
-      budgetAmount: Number(row.budget_amount),
-      spentAmount: Number(row.spent_amount),
-      remainingAmount: Number(row.remaining_amount),
-      color: row.color,
-      icon: row.icon,
-      createdAt: row.created_at
-    }));
   }
 
   // Add Expense to Cloud & recalculate wallet
