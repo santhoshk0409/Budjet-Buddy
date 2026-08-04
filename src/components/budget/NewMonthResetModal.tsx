@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, generateId } from '../../db/database';
+import { db } from '../../db/database';
 import { SupabaseService } from '../../services/supabaseService';
 import { Calendar, Plus, X } from 'lucide-react';
 import { format } from 'date-fns';

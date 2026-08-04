@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { Wallet, Expense, User } from '../types';
-import { db } from '../db/database';
+import { db, generateId } from '../db/database';
 
 export class SupabaseService {
   static isActive(): boolean {
