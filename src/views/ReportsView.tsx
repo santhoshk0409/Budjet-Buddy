@@ -1,13 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../db/database';
 import { formatCurrency, calculateUsagePercentage } from '../utils/formatters';
 import { FileText, Download, CheckCircle2 } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 
-export const ReportsView: React.FC = () => {
+interface ReportsViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const ReportsView: React.FC<ReportsViewProps> = ({
+  selectedMonth,
+  onSelectMonth
+}) => {
   const { currentUser } = useAuth();
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().substring(0, 7));
+  const selectedMonthDate = parseISO(`${selectedMonth}-01`);
 
   const wallets = useLiveQuery(
     async () => {
@@ -43,7 +52,12 @@ export const ReportsView: React.FC = () => {
     return expenses.filter(e => e.date.startsWith(selectedMonth));
   }, [expenses, selectedMonth]);
 
-  const totalBudget = wallets.reduce((sum, w) => sum + w.budgetAmount, 0);
+  const currentMonthKey = format(new Date(), 'yyyy-MM');
+  const monthWallets = useMemo(() => {
+    return wallets.filter(w => w.monthKey ? w.monthKey === selectedMonth : selectedMonth === currentMonthKey);
+  }, [wallets, selectedMonth, currentMonthKey]);
+
+  const totalBudget = monthWallets.reduce((sum, w) => sum + w.budgetAmount, 0);
   const totalSpent = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
   const remainingBudget = totalBudget - totalSpent;
   const budgetUtilization = calculateUsagePercentage(totalSpent, totalBudget);
@@ -53,8 +67,8 @@ export const ReportsView: React.FC = () => {
   monthExpenses.forEach(e => {
     daysInMonthMap[e.date] = (daysInMonthMap[e.date] || 0) + e.amount;
   });
-  const activeDays = Object.keys(daysInMonthMap).length || 1;
-  const avgDailySpend = totalSpent / activeDays;
+  const activeDays = Object.keys(daysInMonthMap).length;
+  const avgDailySpend = activeDays > 0 ? totalSpent / activeDays : 0;
 
   // Highest Spending Wallet
   const walletSpendingMap: { [walletId: string]: number } = {};
@@ -71,16 +85,19 @@ export const ReportsView: React.FC = () => {
   });
 
   // Highest Spending Category
-  const categorySpendingMap: { [typeId: string]: number } = {};
+  const categorySpendingMap: { [key: string]: number } = {};
   monthExpenses.forEach(e => {
-    categorySpendingMap[e.expenseTypeId] = (categorySpendingMap[e.expenseTypeId] || 0) + e.amount;
+    const key = e.expenseTypeId || `wallet-${e.walletId}`;
+    categorySpendingMap[key] = (categorySpendingMap[key] || 0) + e.amount;
   });
 
   let highestCategory = { name: 'N/A', spent: 0 };
-  Object.entries(categorySpendingMap).forEach(([tId, spent]) => {
-    const t = expenseTypes.find(item => item.id === tId);
+  Object.entries(categorySpendingMap).forEach(([key, spent]) => {
+    const t = expenseTypes.find(item => item.id === key);
+    const w = key.startsWith('wallet-') ? wallets.find(item => item.id === key.replace('wallet-', '')) : null;
+    const catName = t?.name || w?.name || 'General';
     if (spent > highestCategory.spent) {
-      highestCategory = { name: t?.name || 'Category', spent };
+      highestCategory = { name: catName, spent };
     }
   });
 
@@ -98,7 +115,7 @@ export const ReportsView: React.FC = () => {
       `==========================================`,
       `  WALLETS BUDDY - FINANCIAL SUMMARY REPORT`,
       `  User: ${currentUser?.name}`,
-      `  Period: ${selectedMonth}`,
+      `  Period: ${format(selectedMonthDate, 'MMMM yyyy')} (${selectedMonth})`,
       `==========================================`,
       ``,
       `SUMMARY METRICS:`,
@@ -148,12 +165,12 @@ export const ReportsView: React.FC = () => {
 
       {/* Month Selector */}
       <div className="bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-        <span className="text-xs font-bold text-slate-500 uppercase">Select Month</span>
+        <span className="text-xs font-bold text-slate-500 uppercase">Selected Month</span>
         <input
           type="month"
           value={selectedMonth}
-          onChange={e => setSelectedMonth(e.target.value)}
-          className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+          onChange={e => onSelectMonth(e.target.value)}
+          className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer"
         />
       </div>
 
@@ -161,7 +178,9 @@ export const ReportsView: React.FC = () => {
       <div className="md3-card p-5 bg-gradient-to-br from-emerald-600 to-teal-800 text-white shadow-xl space-y-4">
         <div className="flex justify-between items-center border-b border-white/20 pb-3">
           <div>
-            <span className="text-xs uppercase text-emerald-100 block">Budget Utilization</span>
+            <span className="text-xs uppercase text-emerald-100 block">
+              Utilization ({format(selectedMonthDate, 'MMM yyyy')})
+            </span>
             <span className="text-2xl font-black">{budgetUtilization}%</span>
           </div>
           <CheckCircle2 className="w-8 h-8 text-emerald-200" />

@@ -73,8 +73,8 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
               <span>Category</span>
             </div>
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
-              <DynamicIcon name={expenseType?.icon || expenseType?.name} size={14} />
-              <span>{expenseType?.name || 'Uncategorized'}</span>
+              <DynamicIcon name={expenseType?.icon || wallet?.icon || 'Wallet'} size={14} />
+              <span>{expenseType?.name || wallet?.name || 'General'}</span>
             </div>
           </div>
 

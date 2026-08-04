@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { User } from '../types';
 import { db, generateId } from '../db/database';
 import { SupabaseService } from '../services/supabaseService';
@@ -9,6 +9,9 @@ interface AuthContextType {
   isLoading: boolean;
   theme: 'light' | 'dark';
   isCloudConnected: boolean;
+  isSyncing: boolean;
+  lastSyncedAt: Date | null;
+  manualSync: () => Promise<void>;
   toggleTheme: () => void;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -23,6 +26,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isCloudConnected] = useState<boolean>(isSupabaseConfigured);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('wallet_buddy_theme');
@@ -44,6 +49,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
 
+  // Manual & Auto Cloud Sync function
+  const manualSync = useCallback(async () => {
+    if (!currentUser || !isSupabaseConfigured) return;
+    setIsSyncing(true);
+    try {
+      await SupabaseService.syncCloudToLocal(currentUser.id);
+      setLastSyncedAt(new Date());
+    } catch (e) {
+      console.error('Manual sync error:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [currentUser]);
+
   // Session Restoration
   useEffect(() => {
     const checkSession = async () => {
@@ -55,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setCurrentUser(user);
             if (isSupabaseConfigured) {
               await SupabaseService.syncCloudToLocal(user.id);
+              setLastSyncedAt(new Date());
             }
           }
         }
@@ -67,23 +87,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkSession();
   }, []);
 
+  // Multi-device Cross-Device Realtime & Focus Auto-Sync
+  useEffect(() => {
+    if (!currentUser || !isSupabaseConfigured) return;
+
+    // 1. Supabase Realtime Listener (Instant <500ms push on laptop edit)
+    const unsubscribeRealtime = SupabaseService.subscribeToRealtimeChanges(currentUser.id, () => {
+      setLastSyncedAt(new Date());
+    });
+
+    // 2. Tab Focus / App Re-open Sync Listener
+    const handleFocusOrVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        manualSync();
+      }
+    };
+
+    window.addEventListener('focus', handleFocusOrVisibility);
+    document.addEventListener('visibilitychange', handleFocusOrVisibility);
+
+    // 3. Periodic 15-second background sync interval
+    const interval = setInterval(() => {
+      manualSync();
+    }, 15000);
+
+    return () => {
+      unsubscribeRealtime();
+      window.removeEventListener('focus', handleFocusOrVisibility);
+      document.removeEventListener('visibilitychange', handleFocusOrVisibility);
+      clearInterval(interval);
+    };
+  }, [currentUser, manualSync]);
+
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     const trimmedEmail = email.trim().toLowerCase();
 
-    // 1. Try Supabase Cloud Login
     if (isSupabaseConfigured) {
       const res = await SupabaseService.loginUser(trimmedEmail, password);
       if (res.success && res.user) {
         await db.users.put(res.user);
         setCurrentUser(res.user);
         localStorage.setItem('wallet_buddy_user_id', res.user.id);
+        setLastSyncedAt(new Date());
         return { success: true };
       } else if (res.error) {
         return { success: false, error: res.error };
       }
     }
 
-    // 2. Fallback to Local IndexedDB Login
     const user = await db.users.where('email').equals(trimmedEmail).first();
     if (user && user.password === password) {
       setCurrentUser(user);
@@ -96,7 +147,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, password: string) => {
     const trimmedEmail = email.trim().toLowerCase();
 
-    // 1. Try Supabase Cloud Sign Up
     if (isSupabaseConfigured) {
       const cloudRes = await SupabaseService.registerUser(name, trimmedEmail, password);
       if (cloudRes.success && cloudRes.user) {
@@ -104,13 +154,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await SupabaseService.syncCloudToLocal(cloudRes.user.id);
         setCurrentUser(cloudRes.user);
         localStorage.setItem('wallet_buddy_user_id', cloudRes.user.id);
+        setLastSyncedAt(new Date());
         return { success: true };
       } else if (cloudRes.error) {
         return { success: false, error: cloudRes.error };
       }
     }
 
-    // 2. Fallback to Local Registration
     const existing = await db.users.where('email').equals(trimmedEmail).first();
     if (existing) {
       return { success: false, error: 'Email ID already registered.' };
@@ -154,6 +204,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         theme,
         isCloudConnected,
+        isSyncing,
+        lastSyncedAt,
+        manualSync,
         toggleTheme,
         login,
         register,

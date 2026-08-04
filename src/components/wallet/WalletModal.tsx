@@ -11,6 +11,7 @@ interface WalletModalProps {
   onClose: () => void;
   walletToEdit?: Wallet | null;
   wallet?: Wallet | null;
+  selectedMonth?: string;
 }
 
 const COLOR_PALETTE = [
@@ -30,7 +31,8 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   isOpen,
   onClose,
   walletToEdit,
-  wallet
+  wallet,
+  selectedMonth
 }) => {
   const activeWallet = walletToEdit || wallet;
   const { currentUser } = useAuth();
@@ -60,12 +62,18 @@ export const WalletModal: React.FC<WalletModalProps> = ({
     if (!name.trim()) return;
 
     const parsedBudget = parseFloat(budgetAmount) || 0;
+    const currentMonthKey = new Date().toISOString().substring(0, 7);
+    const targetMonth = selectedMonth || currentMonthKey;
+    const userExpenses = await db.expenses.where('userId').equals(currentUser.id).toArray();
 
     if (activeWallet) {
-      const remainingAmount = parsedBudget - activeWallet.spentAmount;
+      const monthExpenses = userExpenses.filter(e => e.walletId === activeWallet.id && e.date.startsWith(targetMonth));
+      const spentInMonth = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
+      const remainingAmount = parsedBudget - spentInMonth;
       const updates = {
         name: name.trim(),
         budgetAmount: parsedBudget,
+        spentAmount: spentInMonth,
         remainingAmount,
         color,
         icon
@@ -82,6 +90,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         remainingAmount: parsedBudget,
         color,
         icon,
+        monthKey: targetMonth,
         createdAt: new Date().toISOString()
       };
       await db.wallets.add(newWallet);

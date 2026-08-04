@@ -17,6 +17,7 @@ export interface Wallet {
   icon: string;
   createdAt: string;
   isDeleted?: boolean;
+  monthKey?: string;
 }
 
 export interface ExpenseType {
@@ -31,7 +32,7 @@ export interface Expense {
   id: string;
   userId: string;
   walletId: string;
-  expenseTypeId: string;
+  expenseTypeId?: string;
   amount: number;
   date: string; // YYYY-MM-DD
   time: string; // HH:mm

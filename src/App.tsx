@@ -16,11 +16,15 @@ import { ExpenseTypeModal } from './components/category/ExpenseTypeModal';
 import { ExpenseDetailModal } from './components/expense/ExpenseDetailModal';
 import { NewMonthResetModal } from './components/budget/NewMonthResetModal';
 import { deleteExpense } from './db/database';
+import { format } from 'date-fns';
 
 const MainAppContent: React.FC = () => {
   const { currentUser, isLoading } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [currentTab, setCurrentTab] = useState<ViewTab>('home');
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    format(new Date(), 'yyyy-MM')
+  );
 
   // Modals
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -69,6 +73,8 @@ const MainAppContent: React.FC = () => {
       <main className="min-h-screen">
         {currentTab === 'home' && (
           <HomeView
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
             onOpenAddExpense={() => {
               setEditingExpense(undefined);
               setIsAddExpenseOpen(true);
@@ -84,6 +90,8 @@ const MainAppContent: React.FC = () => {
 
         {currentTab === 'history' && (
           <HistoryView
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
             onOpenExpenseDetail={handleOpenExpenseDetail}
             onEditExpense={(expense) => {
               setEditingExpense(expense);
@@ -92,9 +100,19 @@ const MainAppContent: React.FC = () => {
           />
         )}
 
-        {currentTab === 'analytics' && <AnalyticsView />}
+        {currentTab === 'analytics' && (
+          <AnalyticsView
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
+          />
+        )}
 
-        {currentTab === 'reports' && <ReportsView />}
+        {currentTab === 'reports' && (
+          <ReportsView
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
+          />
+        )}
 
         {currentTab === 'settings' && (
           <SettingsView

@@ -9,26 +9,47 @@ import { CalendarDateSelector } from '../components/common/CalendarDateSelector'
 import {
   BarChart3,
   Wallet as WalletIcon,
-  Tag
+  Tag,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import {
   parseISO,
-  isSameDay,
-  subDays,
-  startOfWeek,
-  endOfWeek,
-  subWeeks,
-  isSameMonth,
+  format,
   subMonths,
-  format
+  addMonths
 } from 'date-fns';
 
-export const AnalyticsView: React.FC = () => {
+interface AnalyticsViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
+  selectedMonth,
+  onSelectMonth
+}) => {
   const { currentUser } = useAuth();
+  const currentMonthKey = format(new Date(), 'yyyy-MM');
+  const isPastMonth = selectedMonth < currentMonthKey;
+  const selectedMonthDate = parseISO(`${selectedMonth}-01`);
+
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('this_month');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
+
+  // Month navigation handlers
+  const handlePrevMonth = () => {
+    const prev = subMonths(selectedMonthDate, 1);
+    onSelectMonth(format(prev, 'yyyy-MM'));
+  };
+
+  const handleNextMonth = () => {
+    if (selectedMonth >= currentMonthKey) return;
+    const next = addMonths(selectedMonthDate, 1);
+    onSelectMonth(format(next, 'yyyy-MM'));
+  };
 
   // Live queries
   const wallets = useLiveQuery(
@@ -67,29 +88,17 @@ export const AnalyticsView: React.FC = () => {
     return set;
   }, [rawExpenses]);
 
-  // Filter expenses by selected calendar / time range
+  // Filter expenses strictly by selectedMonth and active date sub-filters
   const filteredExpenses = useMemo(() => {
-    const now = new Date();
     return rawExpenses.filter(e => {
+      if (!e.date.startsWith(selectedMonth)) return false;
       if (selectedDate) return e.date === selectedDate;
       if (quickFilter === 'custom' && customStartDate && customEndDate) {
         return e.date >= customStartDate && e.date <= customEndDate;
       }
-
-      const expDate = parseISO(e.date);
-      if (quickFilter === 'today') return isSameDay(expDate, now);
-      if (quickFilter === 'yesterday') return isSameDay(expDate, subDays(now, 1));
-      if (quickFilter === 'this_week') return expDate >= startOfWeek(now, { weekStartsOn: 1 }) && expDate <= endOfWeek(now, { weekStartsOn: 1 });
-      if (quickFilter === 'last_week') {
-        const lastWeekStart = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-        const lastWeekEnd = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-        return expDate >= lastWeekStart && expDate <= lastWeekEnd;
-      }
-      if (quickFilter === 'this_month') return isSameMonth(expDate, now);
-      if (quickFilter === 'last_month') return isSameMonth(expDate, subMonths(now, 1));
       return true;
     });
-  }, [rawExpenses, quickFilter, selectedDate, customStartDate, customEndDate]);
+  }, [rawExpenses, selectedMonth, selectedDate, quickFilter, customStartDate, customEndDate]);
 
   // Overall Spending Stats
   const totalPeriodSpent = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
@@ -103,8 +112,8 @@ export const AnalyticsView: React.FC = () => {
     return map;
   }, [filteredExpenses]);
 
-  const activeDaysCount = Object.keys(dailySpendingMap).length || 1;
-  const avgDailySpend = totalPeriodSpent / activeDaysCount;
+  const activeDaysCount = Object.keys(dailySpendingMap).length;
+  const avgDailySpend = activeDaysCount > 0 ? totalPeriodSpent / activeDaysCount : 0;
 
   // Highest & Lowest spending days
   const dailyEntries = Object.entries(dailySpendingMap);
@@ -121,19 +130,25 @@ export const AnalyticsView: React.FC = () => {
   }
 
   // Wallet Breakdown Analytics
+  const monthWallets = useMemo(() => {
+    return wallets.filter(w => w.monthKey ? w.monthKey === selectedMonth : selectedMonth === currentMonthKey);
+  }, [wallets, selectedMonth, currentMonthKey]);
+
   const walletSpending = useMemo(() => {
-    return wallets.map(wallet => {
+    return monthWallets.map(wallet => {
       const spentInPeriod = filteredExpenses
         .filter(e => e.walletId === wallet.id)
         .reduce((sum, e) => sum + e.amount, 0);
       const percentage = totalPeriodSpent > 0 ? Math.round((spentInPeriod / totalPeriodSpent) * 100) : 0;
+      const budgetUsagePct = wallet.budgetAmount > 0 ? Math.round((spentInPeriod / wallet.budgetAmount) * 100) : 0;
       return {
         ...wallet,
         spentInPeriod,
-        percentage
+        percentage,
+        budgetUsagePct
       };
     }).sort((a, b) => b.spentInPeriod - a.spentInPeriod);
-  }, [wallets, filteredExpenses, totalPeriodSpent]);
+  }, [monthWallets, filteredExpenses, totalPeriodSpent]);
 
   // Expense Type Category Analytics
   const typeSpending = useMemo(() => {
@@ -149,8 +164,29 @@ export const AnalyticsView: React.FC = () => {
       };
     }).filter(t => t.spent > 0);
 
+    const uncategorizedExpenses = filteredExpenses.filter(
+      e => !e.expenseTypeId || !expenseTypes.some(t => t.id === e.expenseTypeId)
+    );
+
+    const walletUncatMap: { [walletId: string]: number } = {};
+    uncategorizedExpenses.forEach(e => {
+      walletUncatMap[e.walletId] = (walletUncatMap[e.walletId] || 0) + e.amount;
+    });
+
+    Object.entries(walletUncatMap).forEach(([wId, spent]) => {
+      const w = wallets.find(item => item.id === wId);
+      list.push({
+        id: `wallet-uncat-${wId}`,
+        userId: '',
+        name: w?.name || 'General Wallet',
+        icon: w?.icon || 'Wallet',
+        spent,
+        percentage: totalPeriodSpent > 0 ? Math.round((spent / totalPeriodSpent) * 100) : 0
+      });
+    });
+
     return list.sort((a, b) => b.spent - a.spent);
-  }, [expenseTypes, filteredExpenses, totalPeriodSpent]);
+  }, [expenseTypes, filteredExpenses, wallets, totalPeriodSpent]);
 
   const top5Categories = typeSpending.slice(0, 5);
   const leastUsedCategory = typeSpending.length > 0 ? typeSpending[typeSpending.length - 1] : null;
@@ -163,6 +199,39 @@ export const AnalyticsView: React.FC = () => {
           <BarChart3 className="w-6 h-6 text-blue-600 dark:text-blue-400" />
           <span>Spending Analytics</span>
         </h1>
+      </div>
+
+      {/* Month Navigator Header Bar (Compact & Sleek) */}
+      <div className="flex items-center justify-between bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-xl px-2.5 py-1.5 shadow-xs">
+        <button
+          onClick={handlePrevMonth}
+          className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer transition-colors"
+          title="Previous Month"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-900 dark:text-white">
+            {format(selectedMonthDate, 'MMMM yyyy')}
+          </span>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isPastMonth ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-300 border border-amber-300/50' : 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-300 border border-emerald-300/50'}`}>
+            {isPastMonth ? 'Archived' : 'Active'}
+          </span>
+        </div>
+
+        <button
+          onClick={handleNextMonth}
+          disabled={selectedMonth >= currentMonthKey}
+          className={`p-1 rounded-lg transition-colors ${
+            selectedMonth >= currentMonthKey
+              ? 'opacity-20 cursor-not-allowed text-slate-400'
+              : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer'
+          }`}
+          title="Next Month"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Calendar Date Selector Component */}
@@ -183,7 +252,7 @@ export const AnalyticsView: React.FC = () => {
       {/* Analytics KPI Highlights */}
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2 md3-card p-4 bg-gradient-to-r from-slate-900 to-indigo-950 text-white shadow-xl">
-          <span className="text-xs uppercase tracking-wider text-slate-400">Total Period Spending</span>
+          <span className="text-xs uppercase tracking-wider text-slate-400">Total Spending ({format(selectedMonthDate, 'MMM yyyy')})</span>
           <div className="text-3xl font-black mt-1 text-emerald-400">
             {formatCurrency(totalPeriodSpent)}
           </div>
@@ -218,7 +287,7 @@ export const AnalyticsView: React.FC = () => {
         </h2>
 
         {totalPeriodSpent === 0 ? (
-          <div className="text-center py-6 text-slate-400 text-xs">No expenses recorded for this period.</div>
+          <div className="text-center py-6 text-slate-400 text-xs">No expenses recorded for {format(selectedMonthDate, 'MMMM yyyy')}.</div>
         ) : (
           <div className="space-y-2.5">
             {walletSpending.map(wallet => (
@@ -226,20 +295,25 @@ export const AnalyticsView: React.FC = () => {
                 <div className="flex justify-between items-center text-xs">
                   <div className="flex items-center gap-2">
                     <div
-                      className="w-3 h-3 rounded-full"
+                      className="w-3 h-3 rounded-full shrink-0"
                       style={{ backgroundColor: wallet.color || '#3b82f6' }}
                     />
                     <span className="font-semibold text-slate-800 dark:text-slate-200">{wallet.name}</span>
                   </div>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {formatCurrency(wallet.spentInPeriod)} ({wallet.percentage}%)
-                  </span>
+                  <div className="text-right">
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      {formatCurrency(wallet.spentInPeriod)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 block">
+                      {wallet.budgetUsagePct}% of {formatCurrency(wallet.budgetAmount)} budget used
+                    </span>
+                  </div>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all"
                     style={{
-                      width: `${wallet.percentage}%`,
+                      width: `${Math.min(wallet.budgetUsagePct, 100)}%`,
                       backgroundColor: wallet.color || '#3b82f6'
                     }}
                   />
@@ -258,7 +332,7 @@ export const AnalyticsView: React.FC = () => {
         </h2>
 
         {top5Categories.length === 0 ? (
-          <div className="text-center py-6 text-slate-400 text-xs">No category data available.</div>
+          <div className="text-center py-6 text-slate-400 text-xs">No category data available for this month.</div>
         ) : (
           <div className="space-y-2.5">
             {top5Categories.map((type, rank) => (

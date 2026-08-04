@@ -12,29 +12,35 @@ import {
   Trash2,
   Edit,
   X,
-  RotateCcw
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Lock
 } from 'lucide-react';
 import {
   parseISO,
-  subDays,
-  startOfWeek,
-  endOfWeek,
-  subWeeks,
-  isSameDay,
-  isSameMonth,
-  subMonths
+  subMonths,
+  format,
+  addMonths
 } from 'date-fns';
 
 interface HistoryViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
   onOpenExpenseDetail: (expense: Expense, wallet?: Wallet, type?: ExpenseType) => void;
   onEditExpense: (expense: Expense) => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
+  selectedMonth,
+  onSelectMonth,
   onOpenExpenseDetail,
   onEditExpense
 }) => {
   const { currentUser } = useAuth();
+  const currentMonthKey = format(new Date(), 'yyyy-MM');
+  const isPastMonth = selectedMonth < currentMonthKey;
+  const selectedMonthDate = parseISO(`${selectedMonth}-01`);
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,6 +53,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
   // Undo Toast state
   const [deletedExpense, setDeletedExpense] = useState<Expense | null>(null);
+
+  // Month navigation handlers
+  const handlePrevMonth = () => {
+    const prev = subMonths(selectedMonthDate, 1);
+    onSelectMonth(format(prev, 'yyyy-MM'));
+  };
+
+  const handleNextMonth = () => {
+    if (selectedMonth >= currentMonthKey) return;
+    const next = addMonths(selectedMonthDate, 1);
+    onSelectMonth(format(next, 'yyyy-MM'));
+  };
 
   // Live queries
   const wallets = useLiveQuery(
@@ -82,6 +100,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     []
   );
 
+  const monthWallets = wallets.filter(w => w.monthKey ? w.monthKey === selectedMonth : selectedMonth === currentMonthKey);
+
   // Map expense dates to set for calendar dot highlighting
   const datesWithExpenses = useMemo(() => {
     const set = new Set<string>();
@@ -89,9 +109,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     return set;
   }, [rawExpenses]);
 
-  // Filtered expenses based on all active parameters
+  // Filtered expenses based on all active parameters & selectedMonth
   const filteredExpenses = useMemo(() => {
     return rawExpenses.filter(expense => {
+      // Month scope filter
+      if (!expense.date.startsWith(selectedMonth)) {
+        return false;
+      }
+
       // 1. Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -128,34 +153,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         return expense.date >= customStartDate && expense.date <= customEndDate;
       }
 
-      // 6. Quick Range Filters
-      const now = new Date();
-      const expDate = parseISO(expense.date);
-
-      if (quickFilter === 'today') {
-        return isSameDay(expDate, now);
-      }
-      if (quickFilter === 'yesterday') {
-        return isSameDay(expDate, subDays(now, 1));
-      }
-      if (quickFilter === 'this_week') {
-        return expDate >= startOfWeek(now, { weekStartsOn: 1 }) && expDate <= endOfWeek(now, { weekStartsOn: 1 });
-      }
-      if (quickFilter === 'last_week') {
-        const lastWeekStart = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-        const lastWeekEnd = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-        return expDate >= lastWeekStart && expDate <= lastWeekEnd;
-      }
-      if (quickFilter === 'this_month') {
-        return isSameMonth(expDate, now);
-      }
-      if (quickFilter === 'last_month') {
-        return isSameMonth(expDate, subMonths(now, 1));
-      }
-
       return true;
     });
-  }, [rawExpenses, searchQuery, selectedWalletId, selectedTypeId, selectedCalendarDate, quickFilter, customStartDate, customEndDate, wallets, expenseTypes]);
+  }, [rawExpenses, selectedMonth, searchQuery, selectedWalletId, selectedTypeId, selectedCalendarDate, quickFilter, customStartDate, customEndDate, wallets, expenseTypes]);
 
   // Group expenses by Date string
   const groupedExpenses = useMemo(() => {
@@ -168,6 +168,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   }, [filteredExpenses]);
 
   const handleDelete = async (exp: Expense) => {
+    if (isPastMonth) return;
     await deleteExpense(exp.id);
     setDeletedExpense(exp);
     setTimeout(() => setDeletedExpense(null), 5000);
@@ -189,6 +190,55 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         </h1>
       </div>
 
+      {/* Month Navigator Header Bar (Compact & Sleek) */}
+      <div className="flex items-center justify-between bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-xl px-2.5 py-1.5 shadow-xs">
+        <button
+          onClick={handlePrevMonth}
+          className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer transition-colors"
+          title="Previous Month"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-900 dark:text-white">
+            {format(selectedMonthDate, 'MMMM yyyy')}
+          </span>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isPastMonth ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-300 border border-amber-300/50' : 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-300 border border-emerald-300/50'}`}>
+            {isPastMonth ? 'Archived' : 'Active'}
+          </span>
+        </div>
+
+        <button
+          onClick={handleNextMonth}
+          disabled={selectedMonth >= currentMonthKey}
+          className={`p-1 rounded-lg transition-colors ${
+            selectedMonth >= currentMonthKey
+              ? 'opacity-20 cursor-not-allowed text-slate-400'
+              : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer'
+          }`}
+          title="Next Month"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Read-Only Warning Banner for Past Months */}
+      {isPastMonth && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>Past month data for <strong>{format(selectedMonthDate, 'MMMM yyyy')}</strong> is in Read-Only mode.</span>
+          </div>
+          <button
+            onClick={() => onSelectMonth(currentMonthKey)}
+            className="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[10px] rounded-lg shrink-0 cursor-pointer"
+          >
+            Go Current
+          </button>
+        </div>
+      )}
+
       {/* Interactive Calendar Date Selector Control */}
       <CalendarDateSelector
         quickFilter={quickFilter}
@@ -209,7 +259,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
         <input
           type="text"
-          placeholder="Search by notes, amount, wallet, category..."
+          placeholder="Search notes, amount, wallet, category..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           className="w-full bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 text-slate-900 dark:text-white rounded-2xl pl-10 pr-9 py-2.5 text-xs focus:outline-none focus:border-blue-500 shadow-sm"
@@ -234,7 +284,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-2xl px-3 py-2 text-xs font-semibold focus:outline-none cursor-pointer"
           >
             <option value="all">All Wallets</option>
-            {wallets.map(w => (
+            {monthWallets.map(w => (
               <option key={w.id} value={w.id}>
                 {w.name}
               </option>
@@ -262,7 +312,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       {Object.keys(groupedExpenses).length === 0 ? (
         <div className="md3-card p-10 text-center text-slate-400">
           <Filter className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-2" />
-          <p className="text-sm font-semibold">No expenses found matching calendar filter.</p>
+          <p className="text-sm font-semibold">No expenses found for {format(selectedMonthDate, 'MMMM yyyy')}.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -322,30 +372,32 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           <div className="text-[10px] text-slate-400">{expense.time}</div>
                         </div>
 
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              onEditExpense(expense);
-                            }}
-                            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 cursor-pointer"
-                            title="Edit Expense"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleDelete(expense);
-                            }}
-                            className="p-2 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-400 hover:bg-red-100 cursor-pointer"
-                            title="Delete Expense"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                        {!isPastMonth && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                onEditExpense(expense);
+                              }}
+                              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 cursor-pointer"
+                              title="Edit Expense"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleDelete(expense);
+                              }}
+                              className="p-2 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-400 hover:bg-red-100 cursor-pointer"
+                              title="Delete Expense"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import type { Wallet, ExpenseType } from '../../types';
+import type { Wallet, ExpenseType, Expense } from '../../types';
 import { db, createExpense, updateExpense } from '../../db/database';
 import { formatCurrency } from '../../utils/formatters';
 import { X, Calendar, Clock, FileText, Check, PlusCircle } from 'lucide-react';
@@ -13,7 +13,7 @@ interface AddExpenseModalProps {
     id: string;
     amount: number;
     walletId: string;
-    expenseTypeId: string;
+    expenseTypeId?: string;
     date: string;
     time: string;
     notes?: string;
@@ -28,6 +28,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const { currentUser } = useAuth();
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [expenseTypes, setExpenseTypes] = useState<ExpenseType[]>([]);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
 
   const [amount, setAmount] = useState<string>('');
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
@@ -53,17 +54,20 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       const activeTypes = tList.filter(t => !t.isDeleted);
       setExpenseTypes(activeTypes);
 
+      const eList = await db.expenses.where('userId').equals(currentUser.id).toArray();
+      setAllExpenses(eList);
+
       if (initialExpense) {
         setAmount(initialExpense.amount.toString());
         setSelectedWalletId(initialExpense.walletId);
-        setSelectedTypeId(initialExpense.expenseTypeId);
+        setSelectedTypeId(initialExpense.expenseTypeId || '');
         setDate(initialExpense.date);
         setTime(initialExpense.time);
         setNotes(initialExpense.notes || '');
       } else {
         setAmount('');
         if (activeWallets.length > 0) setSelectedWalletId(activeWallets[0].id);
-        if (activeTypes.length > 0) setSelectedTypeId(activeTypes[0].id);
+        setSelectedTypeId('');
         setDate(new Date().toISOString().split('T')[0]);
         setTime(new Date().toTimeString().split(' ')[0].substring(0, 5));
         setNotes('');
@@ -88,17 +92,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setError('Please select a wallet.');
       return;
     }
-    if (!selectedTypeId) {
-      setError('Please select an expense type.');
-      return;
-    }
 
     setIsSaving(true);
     try {
       if (initialExpense) {
         await updateExpense(initialExpense.id, {
           walletId: selectedWalletId,
-          expenseTypeId: selectedTypeId,
+          expenseTypeId: selectedTypeId || undefined,
           amount: parsedAmount,
           date,
           time,
@@ -108,7 +108,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         await createExpense({
           userId: currentUser!.id,
           walletId: selectedWalletId,
-          expenseTypeId: selectedTypeId,
+          expenseTypeId: selectedTypeId || undefined,
           amount: parsedAmount,
           date,
           time,
@@ -125,6 +125,14 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   };
 
   const selectedWallet = wallets.find(w => w.id === selectedWalletId);
+
+  const getRemainingForWallet = (w: Wallet) => {
+    const monthKey = date ? date.substring(0, 7) : new Date().toISOString().substring(0, 7);
+    const spentInMonth = allExpenses
+      .filter(e => e.walletId === w.id && e.date.startsWith(monthKey))
+      .reduce((sum, e) => sum + e.amount, 0);
+    return w.budgetAmount - spentInMonth;
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex flex-col justify-end max-w-md mx-auto animate-fade-in">
@@ -178,13 +186,14 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               <label className="text-xs font-semibold uppercase text-slate-400">Wallet *</label>
               {selectedWallet && (
                 <span className="text-xs text-slate-500">
-                  Remaining: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(selectedWallet.remainingAmount)}</strong>
+                  Remaining: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(getRemainingForWallet(selectedWallet))}</strong>
                 </span>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
               {wallets.map(w => {
                 const isSelected = w.id === selectedWalletId;
+                const rem = getRemainingForWallet(w);
                 return (
                   <button
                     key={w.id}
@@ -204,7 +213,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     </div>
                     <div className="truncate">
                       <div className="text-xs font-bold truncate">{w.name}</div>
-                      <div className="text-[10px] text-slate-400 truncate">{formatCurrency(w.remainingAmount)} left</div>
+                      <div className="text-[10px] text-slate-400 truncate">{formatCurrency(rem)} left</div>
                     </div>
                   </button>
                 );
@@ -215,16 +224,27 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           {/* Expense Type Selection */}
           <div>
             <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">
-              Expense Category *
+              Expense Category (Optional)
             </label>
             <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto p-1 border border-slate-100 dark:border-slate-800 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setSelectedTypeId('')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                  !selectedTypeId
+                    ? 'bg-slate-700 text-white shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <span>None / Uncategorized</span>
+              </button>
               {expenseTypes.map(t => {
                 const isSelected = t.id === selectedTypeId;
                 return (
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => setSelectedTypeId(t.id)}
+                    onClick={() => setSelectedTypeId(prev => prev === t.id ? '' : t.id)}
                     className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
                       isSelected
                         ? 'bg-blue-600 text-white shadow-sm'

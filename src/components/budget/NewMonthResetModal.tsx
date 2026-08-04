@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db, generateId } from '../../db/database';
-import { Calendar, RefreshCw, ArrowRight } from 'lucide-react';
+import { SupabaseService } from '../../services/supabaseService';
+import { Calendar, Plus, X } from 'lucide-react';
 import { format } from 'date-fns';
 
 export const NewMonthResetModal: React.FC<{ onOpenWalletManagement: () => void }> = ({
@@ -15,18 +16,27 @@ export const NewMonthResetModal: React.FC<{ onOpenWalletManagement: () => void }
     if (!currentUser) return;
 
     const checkNewMonth = async () => {
-      // Check if a reset log exists for this user and current month
+      // 1. Check if user already dismissed or setup budget for this month
       const existingLog = await db.budgetResetLogs
         .where({ userId: currentUser.id, monthKey: currentMonthKey })
         .first();
 
-      if (!existingLog) {
-        // Check if there are expenses from prior months
-        const count = await db.expenses.where('userId').equals(currentUser.id).count();
-        if (count > 0) {
-          setIsOpen(true);
-        }
+      if (existingLog) return;
+
+      // 2. Check if user already logged expenses in this current month
+      const expensesThisMonth = await db.expenses
+        .where('userId')
+        .equals(currentUser.id)
+        .filter(e => Boolean(e.date && e.date.startsWith(currentMonthKey)))
+        .count();
+
+      if (expensesThisMonth > 0) {
+        // User already has data in current month -> auto suppress prompt
+        await SupabaseService.logBudgetReset(currentUser.id, currentMonthKey, 'auto_dismissed');
+        return;
       }
+
+      setIsOpen(true);
     };
 
     checkNewMonth();
@@ -34,68 +44,52 @@ export const NewMonthResetModal: React.FC<{ onOpenWalletManagement: () => void }
 
   if (!isOpen) return null;
 
-  const handleCopyPreviousMonth = async () => {
-    // Record log so prompt doesn't show again this month
-    await db.budgetResetLogs.add({
-      id: generateId(),
-      userId: currentUser!.id,
-      monthKey: currentMonthKey,
-      action: 'copy',
-      createdAt: new Date().toISOString()
-    });
-
-    setIsOpen(false);
-  };
-
-  const handleConfigureNewBudget = async () => {
-    await db.budgetResetLogs.add({
-      id: generateId(),
-      userId: currentUser!.id,
-      monthKey: currentMonthKey,
-      action: 'new',
-      createdAt: new Date().toISOString()
-    });
-
+  const handleStartSetup = async () => {
+    if (currentUser) {
+      await SupabaseService.logBudgetReset(currentUser.id, currentMonthKey, 'new');
+    }
     setIsOpen(false);
     onOpenWalletManagement();
   };
 
+  const handleDismiss = async () => {
+    if (currentUser) {
+      await SupabaseService.logBudgetReset(currentUser.id, currentMonthKey, 'dismissed');
+    }
+    setIsOpen(false);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 max-w-md mx-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 text-center relative animate-fade-in">
+        <button
+          onClick={handleDismiss}
+          className="absolute right-4 top-4 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center mx-auto shadow-lg shadow-blue-500/30">
           <Calendar className="w-7 h-7" />
         </div>
 
         <div>
           <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">
-            Start New Month ({format(new Date(), 'MMMM yyyy')})?
+            Welcome to {format(new Date(), 'MMMM yyyy')}! 🎉
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            All your past expense history is preserved. How would you like to set your monthly wallet budgets for this month?
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            A new month has started. Add your wallets and monthly budgets to begin logging expenses.
           </p>
         </div>
 
-        <div className="space-y-2 pt-2">
+        <div className="pt-2">
           <button
-            onClick={handleCopyPreviousMonth}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl py-3 px-4 text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 cursor-pointer"
+            onClick={handleStartSetup}
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-2xl py-3.5 px-4 text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 active:scale-95 transition-all cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4" />
-            <span>Copy Previous Month Budget</span>
+            <Plus className="w-4 h-4" />
+            <span>+ Add Wallet for {format(new Date(), 'MMMM')}</span>
           </button>
-
-          <button
-            onClick={handleConfigureNewBudget}
-            className="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold rounded-2xl py-3 px-4 text-xs flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <span>Create New Custom Budget</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="text-[10px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-          🔒 Historic monthly data is never deleted.
         </div>
       </div>
     </div>

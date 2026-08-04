@@ -128,7 +128,8 @@ export class SupabaseService {
         spent_amount: wallet.spentAmount,
         remaining_amount: wallet.remainingAmount,
         color: wallet.color,
-        icon: wallet.icon
+        icon: wallet.icon,
+        month_key: wallet.monthKey || null
       };
 
       if (wallet.id && wallet.id.includes('-')) {
@@ -168,6 +169,7 @@ export class SupabaseService {
       if (updates.remainingAmount !== undefined) cloudUpdates.remaining_amount = updates.remainingAmount;
       if (updates.color !== undefined) cloudUpdates.color = updates.color;
       if (updates.icon !== undefined) cloudUpdates.icon = updates.icon;
+      if (updates.monthKey !== undefined) cloudUpdates.month_key = updates.monthKey;
       if (updates.isDeleted !== undefined) cloudUpdates.is_deleted = updates.isDeleted;
 
       const { error } = await supabase!
@@ -241,7 +243,7 @@ export class SupabaseService {
       const payload: any = {
         user_id: expense.userId,
         wallet_id: expense.walletId,
-        expense_type_id: expense.expenseTypeId,
+        expense_type_id: expense.expenseTypeId || null,
         amount: expense.amount,
         date: expense.date,
         time: expense.time,
@@ -255,25 +257,6 @@ export class SupabaseService {
       if (expError) {
         console.error('Supabase createExpense error:', expError);
         return false;
-      }
-
-      const { data: wallet } = await supabase!
-        .from('wallets')
-        .select('*')
-        .eq('id', expense.walletId)
-        .single();
-
-      if (wallet) {
-        const newSpent = Number(wallet.spent_amount) + expense.amount;
-        const newRemaining = Number(wallet.budget_amount) - newSpent;
-
-        await supabase!
-          .from('wallets')
-          .update({
-            spent_amount: newSpent,
-            remaining_amount: newRemaining
-          })
-          .eq('id', expense.walletId);
       }
 
       return true;
@@ -301,6 +284,7 @@ export class SupabaseService {
             remainingAmount: Number(cw.remaining_amount),
             color: cw.color,
             icon: cw.icon,
+            monthKey: cw.month_key || undefined,
             createdAt: cw.created_at,
             isDeleted: cw.is_deleted
           });
@@ -338,8 +322,82 @@ export class SupabaseService {
           });
         }
       }
+
+      // Budget Reset Logs
+      const { data: cloudLogs } = await supabase!.from('budget_reset_logs').select('*').eq('user_id', userId);
+      if (cloudLogs && cloudLogs.length > 0) {
+        for (const cl of cloudLogs) {
+          await db.budgetResetLogs.put({
+            id: cl.id,
+            userId: cl.user_id,
+            monthKey: cl.month_key,
+            action: cl.action as any,
+            createdAt: cl.created_at
+          });
+        }
+      }
     } catch (e) {
       console.error('syncCloudToLocal error:', e);
+    }
+  }
+
+  // Log Budget Reset locally and in cloud
+  static async logBudgetReset(userId: string, monthKey: string, action: string) {
+    const id = generateId();
+    const createdAt = new Date().toISOString();
+
+    await db.budgetResetLogs.put({
+      id,
+      userId,
+      monthKey,
+      action: action as any,
+      createdAt
+    });
+
+    if (this.isActive()) {
+      try {
+        await supabase!.from('budget_reset_logs').insert([{
+          user_id: userId,
+          month_key: monthKey,
+          action
+        }]);
+      } catch (e) {
+        console.error('logBudgetReset cloud error:', e);
+      }
+    }
+  }
+
+  // Realtime subscription setup for instant cross-device updates
+  static subscribeToRealtimeChanges(userId: string, onUpdate: () => void) {
+    if (!this.isActive()) return () => {};
+
+    try {
+      const channel = supabase!
+        .channel(`realtime-user-sync-${userId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'expenses', filter: `user_id=eq.${userId}` },
+          async () => {
+            await this.syncCloudToLocal(userId);
+            onUpdate();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` },
+          async () => {
+            await this.syncCloudToLocal(userId);
+            onUpdate();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase!.removeChannel(channel);
+      };
+    } catch (e) {
+      console.error('Realtime subscription error:', e);
+      return () => {};
     }
   }
 }

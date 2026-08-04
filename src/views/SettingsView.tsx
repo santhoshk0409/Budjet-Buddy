@@ -10,12 +10,15 @@ import {
   Moon,
   Sun,
   Download,
-  Upload,
   Trash2,
   Check,
   Edit2,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  FileText,
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
+import { format, startOfMonth } from 'date-fns';
 
 interface SettingsViewProps {
   onOpenWalletModal: () => void;
@@ -26,13 +29,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onOpenWalletModal,
   onOpenTypeModal
 }) => {
-  const { currentUser, logout, updateProfile, changePassword, theme, toggleTheme } = useAuth();
+  const { currentUser, logout, updateProfile, changePassword, theme, toggleTheme, isSyncing, lastSyncedAt, manualSync } = useAuth();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(currentUser?.name || '');
 
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+
+  // PDF Date Range Selection State
+  const now = new Date();
+  const [startDate, setStartDate] = useState<string>(format(startOfMonth(now), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState<string>(format(now, 'yyyy-MM-dd'));
 
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -56,84 +64,137 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setMessage(null), 3000);
   };
 
-  // CSV Data Export
-  const handleExportCSV = async () => {
+  // Download PDF Report by Date Range
+  const handleDownloadPDF = async () => {
     if (!currentUser) return;
-    const expenses = await db.expenses.where('userId').equals(currentUser.id).toArray();
+
+    if (!startDate || !endDate) {
+      setMessage({ type: 'error', text: 'Please select both start date and end date.' });
+      return;
+    }
+
+    if (startDate > endDate) {
+      setMessage({ type: 'error', text: 'Start date must be before or equal to end date.' });
+      return;
+    }
+
+    const allExpenses = await db.expenses.where('userId').equals(currentUser.id).toArray();
     const wallets = await db.wallets.where('userId').equals(currentUser.id).toArray();
     const types = await db.expenseTypes.where('userId').equals(currentUser.id).toArray();
 
-    const csvLines = ['ID,Date,Time,Amount (INR),Wallet,Category,Notes'];
+    const rangeExpenses = allExpenses
+      .filter(e => e.date >= startDate && e.date <= endDate)
+      .sort((a, b) => b.date.localeCompare(a.date));
 
-    expenses.forEach(e => {
+    const totalSpent = rangeExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalBudget = wallets.reduce((sum, w) => sum + w.budgetAmount, 0);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups in your browser to download the PDF report.');
+      return;
+    }
+
+    const rowsHtml = rangeExpenses.map(e => {
       const w = wallets.find(item => item.id === e.walletId);
       const t = types.find(item => item.id === e.expenseTypeId);
-      const row = [
-        e.id,
-        e.date,
-        e.time,
-        e.amount,
-        `"${w?.name || ''}"`,
-        `"${t?.name || ''}"`,
-        `"${(e.notes || '').replace(/"/g, '""')}"`
-      ];
-      csvLines.push(row.join(','));
-    });
+      return `
+        <tr>
+          <td>${e.date} ${e.time}</td>
+          <td><strong>${w?.name || 'Wallet'}</strong></td>
+          <td>${t?.name || 'Uncategorized'}</td>
+          <td>${e.notes || '-'}</td>
+          <td style="text-align: right; font-weight: bold; color: #dc2626;">₹${e.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+        </tr>
+      `;
+    }).join('');
 
-    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `WalletBuddy_Expenses_${currentUser.name.replace(/\s+/g, '_')}.csv`;
-    link.click();
-  };
-
-  // Full Backup Export JSON
-  const handleExportJSON = async () => {
-    if (!currentUser) return;
-    const userWallets = await db.wallets.where('userId').equals(currentUser.id).toArray();
-    const userTypes = await db.expenseTypes.where('userId').equals(currentUser.id).toArray();
-    const userExpenses = await db.expenses.where('userId').equals(currentUser.id).toArray();
-
-    const backupData = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      user: currentUser,
-      wallets: userWallets,
-      expenseTypes: userTypes,
-      expenses: userExpenses
-    };
-
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `WalletBuddy_Backup_${currentUser.email.replace(/[@.]/g, '_')}.json`;
-    link.click();
-  };
-
-  // Restore Data JSON
-  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentUser) return;
-
-    const reader = new FileReader();
-    reader.onload = async event => {
-      try {
-        const data = JSON.parse(event.target?.result as string);
-        if (data.expenses && Array.isArray(data.expenses)) {
-          for (const exp of data.expenses) {
-            await db.expenses.put({ ...exp, userId: currentUser.id });
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Financial_Report_${startDate}_to_${endDate}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 28px; color: #0f172a; line-height: 1.5; background: #fff; }
+          .header { border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-start; }
+          .title { font-size: 22px; font-weight: 900; color: #1e3a8a; margin: 0; text-transform: uppercase; tracking: 0.5px; }
+          .subtitle { font-size: 12px; color: #64748b; margin-top: 4px; }
+          .badge { background: #dbeafe; color: #1e40af; font-size: 11px; font-weight: 700; padding: 6px 12px; border-radius: 9999px; border: 1px solid #bfdbfe; }
+          .metrics { display: flex; gap: 12px; margin-bottom: 24px; }
+          .card { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 16px; }
+          .card-label { font-size: 10px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.5px; }
+          .card-val { font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 4px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px; }
+          th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-weight: 700; border-bottom: 2px solid #cbd5e1; color: #334155; text-transform: uppercase; font-size: 11px; }
+          td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+          tr:nth-child(even) { background: #f8fafc; }
+          .footer { text-align: center; margin-top: 32px; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+          @media print {
+            body { padding: 0; }
+            @page { margin: 1cm; }
           }
-          setMessage({ type: 'success', text: 'Data restored successfully!' });
-          setTimeout(() => setMessage(null), 3000);
-        }
-      } catch {
-        setMessage({ type: 'error', text: 'Invalid JSON backup file.' });
-      }
-    };
-    reader.readAsText(file);
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h1 class="title">BUDJET BUDDY STATEMENT</h1>
+            <div class="subtitle">User: <strong>${currentUser.name}</strong> (${currentUser.email})</div>
+          </div>
+          <div class="badge">Date Range: ${startDate} to ${endDate}</div>
+        </div>
+
+        <div class="metrics">
+          <div class="card">
+            <div class="card-label">Total Expenses</div>
+            <div class="card-val">${rangeExpenses.length} Records</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Total Spent in Period</div>
+            <div class="card-val" style="color: #dc2626;">₹${totalSpent.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Total Active Budget</div>
+            <div class="card-val" style="color: #2563eb;">₹${totalBudget.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+          </div>
+        </div>
+
+        <h3 style="font-size: 14px; font-weight: 800; margin-bottom: 8px; color: #1e293b;">Expense Ledger (${rangeExpenses.length} Entries)</h3>
+        ${rangeExpenses.length === 0 ? '<p style="font-size: 12px; color: #94a3b8; padding: 16px; background: #f8fafc; border-radius: 8px; text-align: center;">No expenses recorded in this date range.</p>' : `
+          <table>
+            <thead>
+              <tr>
+                <th>Date & Time</th>
+                <th>Wallet</th>
+                <th>Category</th>
+                <th>Notes</th>
+                <th style="text-align: right;">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        `}
+
+        <div class="footer">
+          Generated by Budjet Buddy Personal Finance App on ${new Date().toLocaleString()}
+        </div>
+
+        <script>
+          window.onload = function() {
+            window.print();
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
-  // Reset All User Data (Completely delete wallets, categories, and expenses)
+  // Reset All User Data
   const handleResetData = async () => {
     if (confirm('⚠️ WARNING: Are you sure you want to DELETE ALL wallets and expenses? This will wipe all existing wallets so you start 100% fresh.')) {
       if (!currentUser) return;
@@ -261,7 +322,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* App Preferences & Tools */}
       <div className="space-y-2">
-        <span className="text-xs font-bold uppercase text-slate-400 pl-1">App Configuration</span>
+        <span className="text-xs font-bold uppercase text-slate-400 pl-1">App Configuration & Cloud Sync</span>
+
+        <div className="md3-card p-3.5 flex items-center justify-between cursor-pointer" onClick={manualSync}>
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-900 dark:text-white">Multi-Device Cloud Sync</div>
+              <div className="text-[10px] text-slate-400">
+                {isSyncing ? 'Syncing cloud data...' : lastSyncedAt ? 'Synced & up-to-date' : 'Sync data across Laptop & Mobile'}
+              </div>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            {isSyncing ? 'Syncing...' : 'Sync Now'}
+          </span>
+        </div>
 
         <div className="md3-card p-3.5 flex items-center justify-between cursor-pointer" onClick={toggleTheme}>
           <div className="flex items-center gap-3">
@@ -303,45 +381,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* Backup, Restore & Data Management */}
-      <div className="space-y-2">
-        <span className="text-xs font-bold uppercase text-slate-400 pl-1">Data Backup & Restore</span>
+      {/* Export PDF Statement Section (Replaces old CSV/JSON backup) */}
+      <div className="space-y-3">
+        <span className="text-xs font-bold uppercase text-slate-400 pl-1">Download PDF Statement</span>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={handleExportCSV}
-            className="md3-card p-3 flex flex-col items-center justify-center text-center gap-1.5 cursor-pointer hover:border-blue-400"
-          >
-            <Download className="w-5 h-5 text-blue-500" />
-            <span className="text-xs font-bold text-slate-900 dark:text-white">Export CSV</span>
-            <span className="text-[9px] text-slate-400">Excel Compatible</span>
-          </button>
+        <div className="md3-card p-4 space-y-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400">
+              <FileText className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-xs font-extrabold text-slate-900 dark:text-white">Download PDF Report</h3>
+              <p className="text-[10px] text-slate-400">Select date range to generate statement</p>
+            </div>
+          </div>
 
+          {/* Date Range Selector Inputs */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Start Date</label>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-2 py-2 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">End Date</label>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-2 py-2 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Download PDF Action Button */}
           <button
-            onClick={handleExportJSON}
-            className="md3-card p-3 flex flex-col items-center justify-center text-center gap-1.5 cursor-pointer hover:border-indigo-400"
+            onClick={handleDownloadPDF}
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-2xl py-3 px-4 text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 active:scale-95 transition-all cursor-pointer"
           >
-            <Download className="w-5 h-5 text-indigo-500" />
-            <span className="text-xs font-bold text-slate-900 dark:text-white">Backup JSON</span>
-            <span className="text-[9px] text-slate-400">Full Offline Backup</span>
+            <Download className="w-4 h-4" />
+            <span>Download PDF Statement</span>
           </button>
         </div>
 
-        <label className="md3-card p-3.5 flex items-center justify-between cursor-pointer border-dashed border-slate-300 dark:border-slate-700">
-          <div className="flex items-center gap-3">
-            <Upload className="w-5 h-5 text-emerald-500" />
-            <div>
-              <div className="text-xs font-bold text-slate-900 dark:text-white">Import Backup File</div>
-              <div className="text-[10px] text-slate-400">Restore from JSON backup</div>
-            </div>
-          </div>
-          <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
-          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">Upload</span>
-        </label>
-
+        {/* Reset Data Button */}
         <button
           onClick={handleResetData}
-          className="w-full md3-card p-3.5 flex items-center justify-between text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors"
+          className="w-full md3-card p-3.5 flex items-center justify-between text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors mt-2"
         >
           <div className="flex items-center gap-3">
             <Trash2 className="w-5 h-5" />
