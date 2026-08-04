@@ -28,13 +28,13 @@ export class SupabaseService {
           authError.message.toLowerCase().includes('user already exists') ||
           authError.message.toLowerCase().includes('already exists')
         ) {
-          return { success: false, error: 'This Email ID is already registered. Please login instead.' };
+          return this.loginUser(trimmedEmail, password);
         }
         return { success: false, error: authError.message };
       }
 
       if (authData.user && authData.user.identities && authData.user.identities.length === 0) {
-        return { success: false, error: 'This Email ID is already registered. Please login instead.' };
+        return this.loginUser(trimmedEmail, password);
       }
 
       const userId = authData.user?.id;
@@ -107,8 +107,9 @@ export class SupabaseService {
         createdAt: authData.user.created_at
       };
 
-      // Sync cloud wallets & categories to local Dexie
+      // Bi-directional sync with Supabase cloud
       await this.syncCloudToLocal(userId);
+      await this.syncLocalToCloud(userId);
 
       return { success: true, user };
     } catch (err: any) {
@@ -122,33 +123,24 @@ export class SupabaseService {
     if (!this.isActive()) return false;
     try {
       const payload: any = {
+        id: wallet.id,
         user_id: wallet.userId,
         name: wallet.name,
         budget_amount: wallet.budgetAmount,
         spent_amount: wallet.spentAmount,
         remaining_amount: wallet.remainingAmount,
         color: wallet.color,
-        icon: wallet.icon,
+        icon: wallet.icon || 'Utensils',
         month_key: wallet.monthKey || null
       };
 
-      if (wallet.id && wallet.id.includes('-')) {
-        payload.id = wallet.id;
-      }
-
-      const { data, error } = await supabase!
+      const { error } = await supabase!
         .from('wallets')
-        .insert([payload])
-        .select()
-        .single();
+        .upsert([payload]);
 
       if (error) {
         console.error('Supabase createWallet error:', error);
         return false;
-      }
-
-      if (data && data.id && data.id !== wallet.id) {
-        await db.wallets.update(wallet.id, { id: data.id });
       }
 
       return true;
@@ -205,28 +197,19 @@ export class SupabaseService {
     if (!this.isActive()) return false;
     try {
       const payload: any = {
+        id: type.id,
         user_id: type.userId,
         name: type.name,
         icon: type.icon || 'Tag'
       };
 
-      if (type.id && type.id.includes('-')) {
-        payload.id = type.id;
-      }
-
-      const { data, error } = await supabase!
+      const { error } = await supabase!
         .from('expense_types')
-        .insert([payload])
-        .select()
-        .single();
+        .upsert([payload]);
 
       if (error) {
         console.error('Supabase createExpenseType error:', error);
         return false;
-      }
-
-      if (data && data.id && data.id !== type.id) {
-        await db.expenseTypes.update(type.id, { id: data.id });
       }
 
       return true;
@@ -236,23 +219,67 @@ export class SupabaseService {
     }
   }
 
-  // Add Expense to Cloud & recalculate wallet
-  static async createExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Promise<boolean> {
+  // Ensure default Category exists in Dexie & Supabase for NOT NULL constraint
+  static async ensureDefaultExpenseType(userId: string): Promise<string> {
+    const existing = await db.expenseTypes.where('userId').equals(userId).first();
+    if (existing) {
+      await this.createExpenseType(existing);
+      return existing.id;
+    }
+
+    const defaultType = {
+      id: generateId(),
+      userId,
+      name: 'General',
+      icon: 'Tag'
+    };
+
+    await db.expenseTypes.put({
+      id: defaultType.id,
+      userId: defaultType.userId,
+      name: defaultType.name,
+      icon: defaultType.icon,
+      isDeleted: false
+    });
+
+    await this.createExpenseType(defaultType);
+    return defaultType.id;
+  }
+
+  // Add Expense to Cloud
+  static async createExpense(expense: Expense): Promise<boolean> {
     if (!this.isActive()) return false;
     try {
+      let typeId = expense.expenseTypeId;
+      if (!typeId) {
+        typeId = await this.ensureDefaultExpenseType(expense.userId);
+      } else {
+        const typeObj = await db.expenseTypes.get(typeId);
+        if (typeObj) {
+          await this.createExpenseType(typeObj);
+        }
+      }
+
+      // Ensure parent wallet exists in cloud first
+      const walletObj = await db.wallets.get(expense.walletId);
+      if (walletObj) {
+        await this.createWallet(walletObj);
+      }
+
       const payload: any = {
+        id: expense.id,
         user_id: expense.userId,
         wallet_id: expense.walletId,
-        expense_type_id: expense.expenseTypeId || null,
+        expense_type_id: typeId,
         amount: expense.amount,
         date: expense.date,
         time: expense.time,
-        notes: expense.notes
+        notes: expense.notes || null
       };
 
       const { error: expError } = await supabase!
         .from('expenses')
-        .insert([payload]);
+        .upsert([payload]);
 
       if (expError) {
         console.error('Supabase createExpense error:', expError);
@@ -262,6 +289,46 @@ export class SupabaseService {
       return true;
     } catch (e) {
       console.error('createExpense cloud error:', e);
+      return false;
+    }
+  }
+
+  // Update Expense in Cloud
+  static async updateExpense(expenseId: string, updates: Partial<Expense>): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const cloudUpdates: any = {};
+      if (updates.amount !== undefined) cloudUpdates.amount = updates.amount;
+      if (updates.walletId !== undefined) cloudUpdates.wallet_id = updates.walletId;
+      if (updates.expenseTypeId !== undefined) cloudUpdates.expense_type_id = updates.expenseTypeId || null;
+      if (updates.date !== undefined) cloudUpdates.date = updates.date;
+      if (updates.time !== undefined) cloudUpdates.time = updates.time;
+      if (updates.notes !== undefined) cloudUpdates.notes = updates.notes || null;
+
+      const { error } = await supabase!
+        .from('expenses')
+        .update(cloudUpdates)
+        .eq('id', expenseId);
+
+      if (error) console.error('Supabase updateExpense error:', error);
+      return !error;
+    } catch (e) {
+      console.error('updateExpense cloud error:', e);
+      return false;
+    }
+  }
+
+  // Delete Expense from Cloud
+  static async deleteExpense(expenseId: string): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const { error } = await supabase!
+        .from('expenses')
+        .delete()
+        .eq('id', expenseId);
+      return !error;
+    } catch (e) {
+      console.error('deleteExpense cloud error:', e);
       return false;
     }
   }
@@ -338,6 +405,48 @@ export class SupabaseService {
       }
     } catch (e) {
       console.error('syncCloudToLocal error:', e);
+    }
+  }
+
+  // Push local Dexie records into Supabase cloud if missing from cloud
+  static async syncLocalToCloud(userId: string) {
+    if (!this.isActive()) return;
+
+    try {
+      // 1. Push missing wallets to cloud
+      const localWallets = await db.wallets.where('userId').equals(userId).toArray();
+      const { data: cloudWallets } = await supabase!.from('wallets').select('id').eq('user_id', userId);
+      const cloudWalletIds = new Set((cloudWallets || []).map(w => w.id));
+
+      for (const w of localWallets) {
+        if (!w.isDeleted && !cloudWalletIds.has(w.id)) {
+          await this.createWallet(w);
+        }
+      }
+
+      // 2. Push missing expense types to cloud
+      const localTypes = await db.expenseTypes.where('userId').equals(userId).toArray();
+      const { data: cloudTypes } = await supabase!.from('expense_types').select('id').eq('user_id', userId);
+      const cloudTypeIds = new Set((cloudTypes || []).map(t => t.id));
+
+      for (const t of localTypes) {
+        if (!t.isDeleted && !cloudTypeIds.has(t.id)) {
+          await this.createExpenseType(t);
+        }
+      }
+
+      // 3. Push missing expenses to cloud
+      const localExpenses = await db.expenses.where('userId').equals(userId).toArray();
+      const { data: cloudExpenses } = await supabase!.from('expenses').select('id').eq('user_id', userId);
+      const cloudExpenseIds = new Set((cloudExpenses || []).map(e => e.id));
+
+      for (const e of localExpenses) {
+        if (!cloudExpenseIds.has(e.id)) {
+          await this.createExpense(e);
+        }
+      }
+    } catch (e) {
+      console.error('syncLocalToCloud error:', e);
     }
   }
 

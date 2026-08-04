@@ -55,6 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsSyncing(true);
     try {
       await SupabaseService.syncCloudToLocal(currentUser.id);
+      await SupabaseService.syncLocalToCloud(currentUser.id);
       setLastSyncedAt(new Date());
     } catch (e) {
       console.error('Manual sync error:', e);
@@ -69,11 +70,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const savedUserId = localStorage.getItem('wallet_buddy_user_id');
         if (savedUserId) {
-          const user = await db.users.get(savedUserId);
+          let user = await db.users.get(savedUserId);
+          if (user && isSupabaseConfigured) {
+            const res = await SupabaseService.loginUser(user.email, user.password || 'Password123!');
+            if (res.success && res.user) {
+              user = res.user;
+              await db.users.put(user);
+              localStorage.setItem('wallet_buddy_user_id', user.id);
+            }
+          }
           if (user) {
             setCurrentUser(user);
             if (isSupabaseConfigured) {
               await SupabaseService.syncCloudToLocal(user.id);
+              await SupabaseService.syncLocalToCloud(user.id);
               setLastSyncedAt(new Date());
             }
           }

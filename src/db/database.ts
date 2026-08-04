@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { User, Wallet, ExpenseType, Expense, BudgetResetLog } from '../types';
+import { SupabaseService } from '../services/supabaseService';
 
 export class WalletBuddyDB extends Dexie {
   users!: Table<User, string>;
@@ -22,9 +23,16 @@ export class WalletBuddyDB extends Dexie {
 
 export const db = new WalletBuddyDB();
 
-// Helper to generate unique IDs
-export const generateId = () => {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+// Helper to generate valid RFC4122 v4 UUIDs required by Postgres uuid schema
+export const generateId = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0,
+      v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 };
 
 // Zero mock data generated
@@ -61,7 +69,7 @@ export const recalculateUserWallets = async (userId: string, monthKey?: string) 
   }
 };
 
-// Add Expense with month-aware wallet balance calculation
+// Add Expense with month-aware wallet balance calculation + Supabase cloud push
 export const createExpense = async (expenseData: Omit<Expense, 'id' | 'createdAt'>) => {
   const id = generateId();
   const createdAt = new Date().toISOString();
@@ -84,10 +92,13 @@ export const createExpense = async (expenseData: Omit<Expense, 'id' | 'createdAt
     }
   });
 
+  // Sync to Supabase Cloud asynchronously
+  SupabaseService.createExpense(expense).catch(e => console.error('Cloud createExpense error:', e));
+
   return expense;
 };
 
-// Edit Expense with recalculation across old & new wallets
+// Edit Expense with recalculation across old & new wallets + Supabase cloud update
 export const updateExpense = async (id: string, updatedData: Omit<Expense, 'id' | 'createdAt' | 'userId'>) => {
   await db.transaction('rw', [db.expenses, db.wallets], async () => {
     const oldExpense = await db.expenses.get(id);
@@ -123,9 +134,12 @@ export const updateExpense = async (id: string, updatedData: Omit<Expense, 'id' 
       });
     }
   });
+
+  // Sync to Supabase Cloud asynchronously
+  SupabaseService.updateExpense(id, updatedData).catch(e => console.error('Cloud updateExpense error:', e));
 };
 
-// Delete Expense & restore wallet balance for that month
+// Delete Expense & restore wallet balance for that month + Supabase cloud delete
 export const deleteExpense = async (id: string) => {
   await db.transaction('rw', [db.expenses, db.wallets], async () => {
     const expense = await db.expenses.get(id);
@@ -146,4 +160,7 @@ export const deleteExpense = async (id: string) => {
       });
     }
   });
+
+  // Sync to Supabase Cloud asynchronously
+  SupabaseService.deleteExpense(id).catch(e => console.error('Cloud deleteExpense error:', e));
 };
