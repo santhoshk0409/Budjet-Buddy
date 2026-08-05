@@ -197,14 +197,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateProfile = async (newName: string) => {
     if (!currentUser) return;
-    await db.users.update(currentUser.id, { name: newName });
-    setCurrentUser({ ...currentUser, name: newName });
+    const trimmedName = newName.trim();
+    await db.users.update(currentUser.id, { name: trimmedName });
+    setCurrentUser({ ...currentUser, name: trimmedName });
+    if (isSupabaseConfigured) {
+      await SupabaseService.updateUserProfile(currentUser.id, trimmedName);
+    }
   };
 
   const changePassword = async (newPassword: string) => {
     if (!currentUser) return;
     await db.users.update(currentUser.id, { password: newPassword });
     setCurrentUser({ ...currentUser, password: newPassword });
+    if (isSupabaseConfigured) {
+      await SupabaseService.changeUserPassword(newPassword);
+    }
   };
 
   return (

@@ -14,7 +14,6 @@ import { AddExpenseModal } from './components/expense/AddExpenseModal';
 import { WalletModal } from './components/wallet/WalletModal';
 import { ExpenseTypeModal } from './components/category/ExpenseTypeModal';
 import { ExpenseDetailModal } from './components/expense/ExpenseDetailModal';
-import { NewMonthResetModal } from './components/budget/NewMonthResetModal';
 import { deleteExpense } from './db/database';
 import { format } from 'date-fns';
 
@@ -171,14 +170,6 @@ const MainAppContent: React.FC = () => {
           setIsAddExpenseOpen(true);
         }}
         onDelete={handleDeleteExpenseFromDetail}
-      />
-
-      {/* New Month Budget Reset Prompt Modal */}
-      <NewMonthResetModal
-        onOpenWalletManagement={() => {
-          setEditingWallet(undefined);
-          setWalletModalOpen(true);
-        }}
       />
     </div>
   );

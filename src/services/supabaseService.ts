@@ -7,6 +7,35 @@ export class SupabaseService {
     return isSupabaseConfigured && supabase !== null;
   }
 
+  // Update User Profile Name in Supabase Auth & public.profiles
+  static async updateUserProfile(userId: string, name: string): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      await supabase!.from('profiles').upsert([{ id: userId, name }]);
+      await supabase!.auth.updateUser({
+        data: { name }
+      });
+      return true;
+    } catch (e) {
+      console.error('updateUserProfile error:', e);
+      return false;
+    }
+  }
+
+  // Change User Password in Supabase Auth
+  static async changeUserPassword(newPassword: string): Promise<boolean> {
+    if (!this.isActive()) return false;
+    try {
+      const { error } = await supabase!.auth.updateUser({
+        password: newPassword
+      });
+      return !error;
+    } catch (e) {
+      console.error('changeUserPassword error:', e);
+      return false;
+    }
+  }
+
   // Register user on Supabase Auth + Cloud Profiles table
   static async registerUser(name: string, email: string, password: string): Promise<{ success: boolean; user?: User; error?: string }> {
     if (!this.isActive()) return { success: false, error: 'Supabase is not configured.' };

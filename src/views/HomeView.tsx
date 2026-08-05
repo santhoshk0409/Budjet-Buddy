@@ -20,7 +20,8 @@ import {
   Sun,
   Lock,
   Copy,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { startOfDay, startOfWeek, parseISO, isAfter, format, subMonths, addMonths } from 'date-fns';
 
@@ -43,6 +44,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const { currentUser, theme, toggleTheme, isCloudConnected, isSyncing, lastSyncedAt, manualSync } = useAuth();
   const [undoExpense, setUndoExpense] = useState<Expense | null>(null);
+  const [isBannerDismissed, setIsBannerDismissed] = useState(false);
 
   // Current System Month Key (YYYY-MM)
   const currentMonthKey = format(new Date(), 'yyyy-MM');
@@ -238,6 +240,47 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Sleek New Month Wallet Setup Assistant Banner Card (Non-blocking) */}
+      {!isPastMonth && monthWallets.length === 0 && !isBannerDismissed && (
+        <div className="p-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white rounded-3xl shadow-lg relative overflow-hidden space-y-3 animate-fade-in">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-2xl bg-white/15 backdrop-blur-md">
+                <Calendar className="w-5 h-5 text-amber-300" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black tracking-tight">Welcome to {format(selectedMonthDate, 'MMMM yyyy')}!</h3>
+                <p className="text-[11px] text-blue-100/90 font-medium">Set up your wallet budgets for this month</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsBannerDismissed(true)}
+              className="p-1 rounded-full hover:bg-white/20 text-white/70 hover:text-white transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={handleCopyPreviousMonthWallets}
+              className="flex-1 py-2.5 px-3 bg-white text-blue-700 hover:bg-blue-50 font-extrabold text-xs rounded-2xl shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy Last Month's Wallets</span>
+            </button>
+            <button
+              onClick={() => onOpenWalletModal()}
+              className="py-2.5 px-3.5 bg-white/15 hover:bg-white/25 text-white font-bold text-xs rounded-2xl backdrop-blur-md flex items-center justify-center gap-1 transition-all cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Wallet</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Read-Only Warning Banner for Past Months */}
       {isPastMonth && (
